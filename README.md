@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <a href="https://azhagesan-dev.github.io/OrderFlowMap/"><img src="https://img.shields.io/badge/🚀_Live_Demo-Try_It_Now-blue?style=for-the-badge" alt="Live Demo"/></a>
+  <a href="https://github.com/Azhagesan-dev/OrderFlowMap/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
+</p>
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#live-demo">Live Demo</a> •
   <a href="#quick-start">Quick Start</a> •
@@ -82,11 +87,15 @@ It works in two modes:
 
 ## Live Demo
 
-Simply open `index.html` in any modern browser — no build step, no server, no dependencies to install.
+### 👉 [**Try it live in your browser →**](https://azhagesan-dev.github.io/OrderFlowMap/)
 
-```
+No installation required — the simulation mode works instantly. Just open and explore.
+
+Or run it locally:
+
+```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/OrderFlowMap.git
+git clone https://github.com/Azhagesan-dev/OrderFlowMap.git
 
 # Open in browser
 start OrderFlowMap/index.html        # Windows

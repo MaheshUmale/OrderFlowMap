@@ -11,7 +11,8 @@ const server = Bun.serve({
         ws.send(JSON.stringify({ message: "Authentication successful", status: "success" }));
       } else if (msg.action === 'subscribe') {
         ws.send(JSON.stringify({ message: `Subscribed to ${msg.symbol}`, status: "success" }));
-        let ltp = 25000, vol = 10000;
+        // Start at a more realistic level for NIFTY testing
+        let ltp = 24850.45, vol = 10000;
         const timer = setInterval(() => {
           const change = (Math.random() - 0.5) * 5;
           ltp = parseFloat((ltp + change).toFixed(2));

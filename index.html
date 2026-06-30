@@ -778,7 +778,7 @@ class ChartInstance {
     this.id = id;
     this.container = container;
     this.tick = 0.10;
-    this.mid = 24500.00;
+    this.mid = null; // Initialize as null to avoid hardcoded bias
     this.mode = 'sim';
     this.symbol = 'NIFTY';
     this.exchange = 'NSE';
@@ -805,7 +805,10 @@ class ChartInstance {
 
     this.initDOM();
     this.initChart();
-    this.seedHistory();
+    if (this.mode === 'sim') {
+      this.mid = 24500.00; // Only use default for simulation
+      this.seedHistory();
+    }
   }
 
   initDOM() {
@@ -1073,6 +1076,11 @@ class ChartInstance {
       return;
     }
 
+    if (this.bars.length === 0) {
+      // First tick in Live mode - reset state to ensure no "seed" data is left
+      this.resetData();
+    }
+
     const getField = (obj, keys) => {
       for(const k of keys) {
         if(obj[k] !== undefined && obj[k] !== null) return obj[k];
@@ -1135,6 +1143,7 @@ class ChartInstance {
       this.prevTick.ltp = ltp;
       this.prevTick.volume = vol;
       this.prevTick.ltt = rawLtt;
+      this.mid = ltp;
     }
 
     // Trade detection logic:
@@ -1407,6 +1416,8 @@ document.getElementById('modeSimBtn').addEventListener('click', () => {
   if(activeChart.mode !== 'sim'){
     activeChart.resetData();
     activeChart.mode = 'sim';
+    activeChart.mid = 24500.00;
+    activeChart.seedHistory();
     if (activeChart.liveWs) { activeChart.liveWs.close(); activeChart.liveWs = null; }
     updateSidebarInputs();
     activeChart.syncUI();

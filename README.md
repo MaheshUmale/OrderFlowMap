@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A Bookmap-style order flow visualization tool built entirely in the browser.</b><br>
-  Real-time heatmaps · Trade bubbles · DOM ladder · Volume profile · CVD · Liquidity wall detection
+  Multi-chart Support · Real-time heatmaps · Trade bubbles · DOM ladder · CVD · Local Persistence
 </p>
 
 <p align="center">
@@ -42,6 +42,18 @@ It works in two modes:
 
 ## Features
 
+### 🖥️ Multi-Chart Support
+- Support for **1x1, 2x1, 1x2, and 2x2 layouts**
+- Each chart instance is independent — run different symbols or modes (Sim/Live) side-by-side
+- Active chart synchronization: Sidebar controls and DOM/Tape automatically switch to the currently selected chart
+- Global connection settings: Configure API keys and WebSocket URLs once for all charts
+
+### 💾 Local Storage (Persistence)
+- Integrated **IndexedDB** database (`OrderFlowDB`) to store raw market ticks
+- Building history: When in Live mode, ticks are auto-saved to build a historical database
+- Session recovery: Switching symbols or refreshing the page doesn't lose your "Time & Sales" or Heatmap history
+- Dedicated management UI to clear all or symbol-specific stored data
+
 ### 🔥 Order Book Heatmap
 - Real-time L2 depth visualization with configurable intensity, gamma correction, and row height
 - Four color schemes: **Bookmap** (bi-color bid/ask), **Mono**, **Inferno**, **Viridis**
@@ -56,6 +68,7 @@ It works in two modes:
 - Configurable thresholds for minimum trade size and "large" trade classification
 
 ### 📊 Overlays & Analytics
+- **Professional Trade Detection** — Uses the **Lee-Ready algorithm** (comparing LTP to BBO) with a **Tick Rule** fallback for accurate buyer/seller aggression classification
 - **Best Bid/Ask lines** — real-time BBO tracking with color-coded series
 - **Session VWAP** — volume-weighted average price tracked across the session
 - **Volume Profile** — horizontal histogram anchored to the right edge with POC (Point of Control) highlighted
@@ -266,25 +279,17 @@ OrderFlowMap is a **single HTML file** (~1,700 lines) with no build tooling, no 
 index.html
 ├── <style>          — Complete CSS design system (~210 lines)
 ├── <body>           — HTML layout with header, 3-column grid, footer
-└── <script>         — Application logic (~1,250 lines)
-    ├── Config & State
-    ├── Utilities (clamp, mix, rgba, roundTick, gauss)
+└── <script>         — Application logic (~1,700 lines)
+    ├── DBManager    — IndexedDB abstraction for tick persistence
+    ├── ChartInstance — Class-based encapsulation for multi-chart support
+    ├── Config & State — Global config for shared credentials
+    ├── Utilities (clamp, mix, rgba, roundTick, gauss, parseToSec)
     ├── Color Maps (bookmap, mono, inferno, viridis)
-    ├── Chart Setup (Lightweight Charts v5 initialization)
-    ├── Custom Primitives
-    │   ├── HeatmapPrimitive — L2 depth rendering + volume profile
-    │   ├── WallsPrimitive   — Liquidity wall detection & annotation
-    │   └── BubblesPrimitive — Trade bubble rendering with halo effects
-    ├── Simulator Engine
-    │   ├── Regime model (drift, volatility, sweeps, icebergs)
-    │   └── Synthetic order book & trade generation
-    ├── Live WebSocket Client
-    │   ├── OpenAlgo auth/subscribe protocol
-    │   ├── Trade detection via volume delta
-    │   └── Real-time VWAP computation
+    ├── Custom Primitives (Heatmap, Walls, Bubbles)
+    ├── Simulator Engine (Regime model & synthetic generation)
+    ├── Live WebSocket Client (OpenAlgo protocol + trade detection)
     ├── Renderers (DOM ladder, tape, colorbar, alerts)
-    ├── UI Controls (range sliders, checkboxes, presets)
-    └── Boot sequence (seed history → start loop)
+    └── Boot sequence (DB init → layout setup → start loop)
 ```
 
 ### Custom Primitives (Lightweight Charts v5 API)
@@ -395,7 +400,8 @@ For best performance with large history windows (>1800s), use Chrome/Edge and a 
 
 ## Roadmap
 
-- [ ] Multi-symbol support with tabbed charts
+- [x] Multi-chart support (1x1 to 2x2 layouts)
+- [x] Local persistence (IndexedDB)
 - [ ] Recorded session playback (import/export JSON)
 - [ ] Configurable depth levels (currently fixed at 5)
 - [ ] WebSocket reconnection with backoff

@@ -1075,14 +1075,14 @@ class ChartInstance {
     if(rawLtp === null) return;
     const ltp = Number(rawLtp);
 
-    const rawVol = getField(data, ['volume', 'v', 'vol', 'cum_vol', 'vtt']);
+    const rawVol = getField(data, ['volume', 'v', 'vol', 'cum_vol', 'vtt', 'total_volume', 'tv']);
     const vol = rawVol !== null ? Number(rawVol) : null;
 
-    const rawLastQty = getField(data, ['last_trade_quantity', 'ltq', 'lq', 'qty', 'last_qty', 'last_trade_qty']);
+    const rawLastQty = getField(data, ['last_trade_quantity', 'ltq', 'lq', 'qty', 'last_qty', 'last_trade_qty', 'last_trade_volume']);
     const lastQty = rawLastQty !== null ? Number(rawLastQty) : null;
 
-    const rawLtt = getField(data, ['ltt', 'last_trade_time', 'time']);
-    const rawMsgTime = getField(data, ['timestamp', 'ts', 'msg_time']) || Date.now();
+    const rawLtt = getField(data, ['ltt', 'last_trade_time', 'time', 'last_trade_timestamp']);
+    const rawMsgTime = getField(data, ['timestamp', 'ts', 'msg_time', 'msg_timestamp']) || Date.now();
 
     function parseToSec(val) {
       if (!val) return Math.floor(Date.now() / 1000);
@@ -1113,13 +1113,17 @@ class ChartInstance {
       this.prevTick.ltt = rawLtt;
     }
 
-    // Trade detection logic: Prefer volume delta, fallback to lastQty if price or time changed
+    // Trade detection logic:
+    // 1. Prefer volume delta if cumulative volume is provided and increasing
     if (vol !== null && this.prevTick.volume !== null && vol > this.prevTick.volume) {
       detectedQty = vol - this.prevTick.volume;
-    } else if (lastQty !== null && lastQty > 0) {
+    }
+    // 2. Fallback to lastQty if it's explicitly provided and positive
+    else if (lastQty !== null && lastQty > 0) {
       const timeChanged = (rawLtt !== null && rawLtt !== this.prevTick.ltt);
       const priceChanged = (ltp !== this.prevTick.ltp);
-      if (timeChanged || priceChanged) {
+      // If we don't have cumulative volume, or if we see price/time change, we must trust lastQty.
+      if (timeChanged || priceChanged || vol === null) {
         detectedQty = lastQty;
       }
     }
@@ -1416,7 +1420,10 @@ document.getElementById('connectBtn').addEventListener('click', () => {
         inst.liveMsgCount++;
         if (inst === activeChart) {
           const d = msg.data;
-          document.getElementById('lastData').textContent = `LTP:${d.ltp||d.lp} V:${d.volume||d.v} LQ:${d.last_trade_quantity||d.ltq}`;
+          const ltp = d.ltp||d.lp||d.last||d.price;
+          const vol = d.volume||d.v||d.vol||d.cum_vol||d.vtt||d.tv;
+          const lq  = d.last_trade_quantity||d.ltq||d.lq||d.qty||d.last_qty||d.last_trade_qty||d.last_trade_volume;
+          document.getElementById('lastData').textContent = `LTP:${ltp} V:${vol} LQ:${lq}`;
         }
         inst.processLiveData(msg.data);
       }

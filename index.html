@@ -683,7 +683,7 @@ class ChartInstance {
     this.bars = []; this.depth = []; this.trades = []; this.cvdBars = [];
     this.cvd = 0; this.tradeVolByPrice = new Map();
     this.liveWs = null; this.liveMsgCount = 0;
-    this.prevTick = { volume: null, ltp: null, lastSide: 'B' };
+    this.prevTick = { volume: null, ltp: null, lastSide: 'B', ltt: null };
     this.liveVwapNum = 0; this.liveVwapDen = 0;
 
     this.ui = {
@@ -865,6 +865,22 @@ class ChartInstance {
     while(this.trades.length && this.trades[0].time < tooOld) this.trades.shift();
   }
 
+  resetData() {
+    this.bars = [];
+    this.depth = [];
+    this.trades = [];
+    this.cvdBars = [];
+    this.cvd = 0;
+    this.tradeVolByPrice = new Map();
+    this.liveMsgCount = 0;
+    this.prevTick = { volume: null, ltp: null, lastSide: 'B', ltt: null };
+    this.liveVwapNum = 0;
+    this.liveVwapDen = 0;
+    this.lastTickTime = Math.floor(Date.now() / 1000);
+    this.applySeriesData();
+    if(this === activeChart) this.syncUI();
+  }
+
   applySeriesData() {
     this.bidSeries.setData(this.ui.showBBA? this.bars.map(b=>({time:b.time, value:b.bbid})) : []);
     this.askSeries.setData(this.ui.showBBA? this.bars.map(b=>({time:b.time, value:b.bask})) : []);
@@ -946,23 +962,63 @@ class ChartInstance {
 
   processLiveData(data) {
     if(!data || data.ltp === undefined) return;
-    const ltp = data.ltp; const vol = data.volume || 0;
-    const ts = Math.floor((data.ltt || data.timestamp || Date.now())/1000);
-    const bids = (data.depth?.buy || []).filter(x=>x.price>0).map(x=>({p:x.price, q:x.quantity, o:x.orders||1}));
-    const asks = (data.depth?.sell || []).filter(x=>x.price>0).map(x=>({p:x.price, q:x.quantity, o:x.orders||1}));
+    const ltp = Number(data.ltp);
+    const vol = data.volume !== undefined ? Number(data.volume) : (data.v !== undefined ? Number(data.v) : null);
+    const lastQty = data.last_trade_quantity !== undefined ? Number(data.last_trade_quantity) : (data.ltq !== undefined ? Number(data.ltq) : null);
+
+    // Distinguish between Trade Time (ltt) and Message Time (timestamp)
+    const rawLtt = data.ltt || data.timestamp || Date.now();
+    const rawMsgTime = data.timestamp || data.ltt || Date.now();
+
+    function parseToSec(val) {
+      if (typeof val === 'string') {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? Math.floor(Date.now() / 1000) : Math.floor(d.getTime() / 1000);
+      }
+      return val > 100000000000 ? Math.floor(val / 1000) : Math.floor(val);
+    }
+
+    let ts = parseToSec(rawMsgTime);
+    const tradeTs = parseToSec(rawLtt);
+
+    // Safety: ensure time never goes backwards
+    const lastBar = this.bars[this.bars.length - 1];
+    if (lastBar && ts < lastBar.time) ts = lastBar.time;
+
+    const bids = (data.depth?.buy || []).filter(x=>x.price>0).map(x=>({p:Number(x.price), q:Number(x.quantity), o:Number(x.orders||1)}));
+    const asks = (data.depth?.sell || []).filter(x=>x.price>0).map(x=>({p:Number(x.price), q:Number(x.quantity), o:Number(x.orders||1)}));
     const bbid = bids[0]?.p || ltp, bask = asks[0]?.p || ltp;
 
-    if(this.prevTick.volume !== null){
-      const dV = vol - this.prevTick.volume;
-      if(dV > 0){
-        let side = ltp > this.prevTick.ltp ? 'B' : (ltp < this.prevTick.ltp ? 'S' : this.prevTick.lastSide);
-        this.trades.push({time:ts, price:ltp, qty:dV, side});
-        const pk = ltp.toFixed(2); this.tradeVolByPrice.set(pk, (this.tradeVolByPrice.get(pk)||0)+dV);
-        this.cvd += (side==='B'?dV:-dV); this.liveVwapNum += ltp*dV; this.liveVwapDen += dV;
-        this.prevTick.lastSide = side;
-      }
+    let detectedQty = 0;
+    let side = this.prevTick.lastSide;
+
+    // Handle initial volume state
+    if(vol !== null && this.prevTick.volume === null){
+      this.prevTick.volume = vol;
+      this.prevTick.ltp = ltp;
+      this.prevTick.ltt = rawLtt;
     }
-    this.prevTick.volume = vol; this.prevTick.ltp = ltp;
+
+    // Trade detection logic
+    if(lastQty !== null && lastQty > 0 && rawLtt !== this.prevTick.ltt){
+       detectedQty = lastQty;
+    } else if(vol !== null && vol > this.prevTick.volume){
+       detectedQty = vol - this.prevTick.volume;
+    }
+
+    if(detectedQty > 0){
+      side = ltp > this.prevTick.ltp ? 'B' : (ltp < this.prevTick.ltp ? 'S' : this.prevTick.lastSide);
+      this.trades.push({time:ts, price:ltp, qty:detectedQty, side});
+      const pk = ltp.toFixed(2); this.tradeVolByPrice.set(pk, (this.tradeVolByPrice.get(pk)||0)+detectedQty);
+      this.cvd += (side==='B'?detectedQty:-detectedQty);
+      this.liveVwapNum += ltp*detectedQty;
+      this.liveVwapDen += detectedQty;
+      this.prevTick.lastSide = side;
+    }
+
+    if(vol !== null) this.prevTick.volume = vol;
+    this.prevTick.ltp = ltp;
+    this.prevTick.ltt = rawLtt;
     const vwap = this.liveVwapDen > 0 ? this.liveVwapNum/this.liveVwapDen : ltp;
     const last = this.bars[this.bars.length-1];
     if(last && last.time === ts){
@@ -1117,8 +1173,8 @@ document.getElementById('hollowSmall').addEventListener('change', e => { activeC
   document.getElementById(k)?.addEventListener('change', e => { activeChart.ui[k] = e.target.checked; activeChart.applySeriesData(); });
 });
 
-document.getElementById('modeSimBtn').addEventListener('click', () => { activeChart.mode = 'sim'; updateSidebarInputs(); activeChart.syncUI(); });
-document.getElementById('modeLiveBtn').addEventListener('click', () => { activeChart.mode = 'live'; updateSidebarInputs(); activeChart.syncUI(); });
+document.getElementById('modeSimBtn').addEventListener('click', () => { if(activeChart.mode !== 'sim'){ activeChart.resetData(); activeChart.mode = 'sim'; updateSidebarInputs(); activeChart.syncUI(); } });
+document.getElementById('modeLiveBtn').addEventListener('click', () => { if(activeChart.mode !== 'live'){ activeChart.resetData(); activeChart.mode = 'live'; updateSidebarInputs(); activeChart.syncUI(); } });
 
 document.getElementById('connectBtn').addEventListener('click', () => {
   const inst = activeChart;
@@ -1137,7 +1193,13 @@ document.getElementById('connectBtn').addEventListener('click', () => {
     ws.onmessage = e => {
       const msg = JSON.parse(e.data);
       if(msg.message === 'Authentication successful') ws.send(JSON.stringify({action:'subscribe', symbol:inst.symbol, exchange:inst.exchange, mode:3, depth:5}));
-      if(msg.type === 'market_data'){ inst.liveMsgCount++; inst.processLiveData(msg.data); }
+      if(msg.type === 'market_data'){
+        inst.liveMsgCount++;
+        if(inst.mode === 'live' && !msg.data.volume && !msg.data.v && !msg.data.last_trade_quantity && !msg.data.ltq){
+           console.warn(`OpenAlgo (${inst.symbol}): Missing volume/qty data in market_data msg`, msg.data);
+        }
+        inst.processLiveData(msg.data);
+      }
     };
     ws.onclose = () => { if(inst.liveWs === ws) inst.liveWs = null; if(activeChart === inst) updateSidebarInputs(); inst.syncUI(); };
   }

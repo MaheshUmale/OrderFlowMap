@@ -1065,15 +1065,24 @@ class ChartInstance {
     renderDOM(); renderTape();
   }
 
-  processLiveData(data) {
+  processLiveData(data, isBatch = false) {
+    if (Array.isArray(data)) {
+      data.forEach(d => this.processLiveData(d, true));
+      this.applySeriesData();
+      if(this === activeChart) this.syncUI();
+      return;
+    }
+
     const getField = (obj, keys) => {
-      for(const k of keys) if(obj[k] !== undefined && obj[k] !== null) return obj[k];
+      for(const k of keys) {
+        if(obj[k] !== undefined && obj[k] !== null) return obj[k];
+      }
       return null;
     };
 
-    const rawLtp = getField(data, ['ltp', 'lp', 'last', 'price']);
-    if(rawLtp === null) return;
-    const ltp = Number(rawLtp);
+    const rawLtp = getField(data, ['ltp', 'lp', 'last', 'price', 'close']);
+    const ltp = rawLtp !== null ? Number(rawLtp) : this.prevTick.ltp;
+    if(ltp === null) return; // Still no price available
 
     const rawVol = getField(data, ['volume', 'v', 'vol', 'cum_vol', 'vtt', 'total_volume', 'tv']);
     const vol = rawVol !== null ? Number(rawVol) : null;
@@ -1081,16 +1090,25 @@ class ChartInstance {
     const rawLastQty = getField(data, ['last_trade_quantity', 'ltq', 'lq', 'qty', 'last_qty', 'last_trade_qty', 'last_trade_volume']);
     const lastQty = rawLastQty !== null ? Number(rawLastQty) : null;
 
-    const rawLtt = getField(data, ['ltt', 'last_trade_time', 'time', 'last_trade_timestamp']);
-    const rawMsgTime = getField(data, ['timestamp', 'ts', 'msg_time', 'msg_timestamp']) || Date.now();
+    const rawLtt = getField(data, ['ltt', 'last_trade_time', 'time', 'last_trade_timestamp', 'ltt_val']);
+    const rawMsgTime = getField(data, ['timestamp', 'ts', 'msg_time', 'msg_timestamp', 'time', 'ltt', 'last_trade_time']) || Date.now();
 
     function parseToSec(val) {
       if (!val) return Math.floor(Date.now() / 1000);
       if (typeof val === 'string') {
+        if (val.length === 8 && val.includes(':')) {
+          const today = new Date().toISOString().split('T')[0];
+          const d2 = new Date(`${today}T${val}`);
+          if (!isNaN(d2.getTime())) return Math.floor(d2.getTime() / 1000);
+        }
         const d = new Date(val);
-        return isNaN(d.getTime()) ? Math.floor(Date.now() / 1000) : Math.floor(d.getTime() / 1000);
+        if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+        return Math.floor(Date.now() / 1000);
       }
-      return val > 100000000000 ? Math.floor(val / 1000) : Math.floor(val);
+      if (typeof val === 'number') {
+        return val > 100000000000 ? Math.floor(val / 1000) : Math.floor(val);
+      }
+      return Math.floor(Date.now() / 1000);
     }
 
     let ts = parseToSec(rawMsgTime);
@@ -1099,12 +1117,18 @@ class ChartInstance {
     const lastBar = this.bars[this.bars.length - 1];
     if (lastBar && ts < lastBar.time) ts = lastBar.time;
 
-    const bids = (data.depth?.buy || []).filter(x=>Number(x.price)>0).map(x=>({p:Number(x.price), q:Number(x.quantity), o:Number(x.orders||1)}));
-    const asks = (data.depth?.sell || []).filter(x=>Number(x.price)>0).map(x=>({p:Number(x.price), q:Number(x.quantity), o:Number(x.orders||1)}));
+    const depthObj = data.depth || data.dp || data.depth_data;
+    const bids = (depthObj?.buy || depthObj?.bids || []).filter(x=>Number(x.price||x.p)>0).map(x=>({p:Number(x.price||x.p), q:Number(x.quantity||x.q||x.v), o:Number(x.orders||x.o||1)}));
+    const asks = (depthObj?.sell || depthObj?.asks || []).filter(x=>Number(x.price||x.p)>0).map(x=>({p:Number(x.price||x.p), q:Number(x.quantity||x.q||x.v), o:Number(x.orders||x.o||1)}));
     const bbid = bids[0]?.p || ltp, bask = asks[0]?.p || ltp;
 
     let detectedQty = 0;
     let side = this.prevTick.lastSide;
+
+    // Handle volume resets
+    if (vol !== null && this.prevTick.volume !== null && vol < this.prevTick.volume) {
+      this.prevTick.volume = vol;
+    }
 
     // Handle initial state
     if(this.prevTick.ltp === null) {
@@ -1122,8 +1146,12 @@ class ChartInstance {
     else if (lastQty !== null && lastQty > 0) {
       const timeChanged = (rawLtt !== null && rawLtt !== this.prevTick.ltt);
       const priceChanged = (ltp !== this.prevTick.ltp);
-      // If we don't have cumulative volume, or if we see price/time change, we must trust lastQty.
-      if (timeChanged || priceChanged || vol === null) {
+      const volAvailable = (vol !== null);
+
+      // If we don't have cumulative volume info, or if we see price/time change, we trust lastQty.
+      // We also check if vol is unchanged; if vol is same but lastQty is there, it might be a redundant lastQty.
+      // But if we DON'T have vol at all, we must trust lastQty.
+      if (!volAvailable || timeChanged || priceChanged) {
         detectedQty = lastQty;
       }
     }
@@ -1147,6 +1175,7 @@ class ChartInstance {
     if(vol !== null) this.prevTick.volume = vol;
     this.prevTick.ltp = ltp;
     this.prevTick.ltt = rawLtt;
+
     const vwap = this.liveVwapDen > 0 ? this.liveVwapNum/this.liveVwapDen : ltp;
     const last = this.bars[this.bars.length-1];
     if(last && last.time === ts){
@@ -1161,7 +1190,11 @@ class ChartInstance {
     // Persist to local DB
     db.saveTick(this.symbol, { ts, ltp, vol, lastQty: detectedQty, bid: bbid, ask: bask, depth: { buy: bids, sell: asks } });
 
-    this.trimHistory(ts); this.applySeriesData(); if(this === activeChart) this.syncUI();
+    this.trimHistory(ts);
+    if (!isBatch) {
+      this.applySeriesData();
+      if(this === activeChart) this.syncUI();
+    }
   }
 
   async loadHistoryFromDB() {
@@ -1414,16 +1447,17 @@ document.getElementById('connectBtn').addEventListener('click', () => {
     inst.liveWs = ws;
     ws.onopen = () => ws.send(JSON.stringify({action:'authenticate', api_key:GLOBAL_CONFIG.apiKey}));
     ws.onmessage = e => {
-      const msg = JSON.parse(e.data);
+      let msg;
+      try { msg = JSON.parse(e.data); } catch(err) { return; }
       if(msg.message === 'Authentication successful') ws.send(JSON.stringify({action:'subscribe', symbol:inst.symbol, exchange:GLOBAL_CONFIG.exchange, mode:3, depth:5}));
-      if(msg.type === 'market_data'){
+      if(msg.type === 'market_data' && msg.data){
         inst.liveMsgCount++;
         if (inst === activeChart) {
-          const d = msg.data;
-          const ltp = d.ltp||d.lp||d.last||d.price;
-          const vol = d.volume||d.v||d.vol||d.cum_vol||d.vtt||d.tv;
+          const d = Array.isArray(msg.data) ? msg.data[msg.data.length-1] : msg.data;
+          const ltp = d.ltp||d.lp||d.last||d.price||d.close;
+          const vol = d.volume||d.v||d.vol||d.cum_vol||d.vtt||d.total_volume||d.tv;
           const lq  = d.last_trade_quantity||d.ltq||d.lq||d.qty||d.last_qty||d.last_trade_qty||d.last_trade_volume;
-          document.getElementById('lastData').textContent = `LTP:${ltp} V:${vol} LQ:${lq}`;
+          document.getElementById('lastData').textContent = `LTP:${ltp} V:${vol} LQ:${lq} Tr:${inst.trades.length} CVD:${inst.cvd}`;
         }
         inst.processLiveData(msg.data);
       }
